@@ -1,0 +1,53 @@
+\documentclass[tikz,border=2mm]{standalone}
+\usepackage{tikz}
+\usetikzlibrary{positioning, shapes.multipart, arrows, shadows, backgrounds, fit}
+
+\tikzset{
+  WL/.style={
+    draw,
+    rectangle,
+    minimum height=2.4cm,
+    text width = .15cm,
+    fill=cyan,
+    align=center,
+    inner sep=1ex
+  },
+}
+
+\begin{document}
+
+\tikzstyle{block} = [draw, fill=white, rectangle, 
+    minimum height=3em, minimum width=6em]
+\tikzstyle{sum} = [draw = red!50!black, fill=cyan, circle=.1cm, node distance=.5cm]
+\tikzstyle{input} = [coordinate]
+\tikzstyle{output} = [coordinate]
+\tikzstyle{pinstyle} = [pin edge={to-,thin,black}]
+
+\begin{tikzpicture}[auto, node distance=2cm,>=latex']
+
+    \node [input, name=input] {};
+    \node[WL, right= 0.5cm of input, fill = cyan,draw = red!50!black, text = black] (WL1) {\rotatebox{90}{\footnotesize{\textsf{Linear}}}};
+    \node[WL, right =0cm of WL1, fill = cyan,draw = red!50!black, text = black] (AF1) {\rotatebox{90}{\footnotesize{ELU}}};
+    
+    \node[WL, right= 0.5 of AF1, fill = cyan,draw = red!50!black, text = black] (WL2) {\rotatebox{90}{\footnotesize{\textsf{Linear}}}};
+    
+    \node [sum, right = .5 of WL2] (sum) {+};
+    \node[WL, right =0.5 cm of sum, fill = cyan,draw = red!50!black, text = black] (AF2) {\rotatebox{90}{\footnotesize{ELU}}};
+    \node[right =0.5 cm of AF2] (output) {};
+    
+   \node[below =0.5 cm of WL1] (anode) {};
+
+
+
+    \draw [thick, draw,->] (input) + (-0.5,0) -- node {} (WL1);
+    \draw [thick, draw,->] (AF2) -- node {} (output);
+    \draw [rounded corners = .25cm, thick, ->] (input) |- (anode.west) -| (sum);
+    
+
+    
+    \draw [thick, ->] (AF1) -- (WL2);
+    \draw [thick, ->] (WL2) -- (sum);
+    \draw [thick, ->] (sum) -- (AF2);
+    
+\end{tikzpicture}
+\end{document}
