@@ -74,7 +74,6 @@ If you `do not want to use conda` you can create a virtual environment as explai
 
 ```bash
 python -m venv <env_name>
-virtualenv <env_name>
 ```
 
 Activate the virtual environment based on your operating system:
@@ -228,6 +227,10 @@ so `-5.9908` is the coeffecient of the term $u u_x$ and `-0.9965` is the coeffec
 
 
 ##### hint: if you use `CPU` for the simulation you may have an issue the data that is generated via `GPU`! Please restart your kernel and do the simualtion! each example takes some minutes, hopefully not long!
+
+
+__hint__: To plot the time evolution of the coefficients throught the iterations we load the log file via this syntax: `history = load_tensorboard(foldername)`
+. Please bear in mind that this part of the code is not essential for the core part of the algorithm and it is just a way to have graphical plots. If input settings such as order of `Dictionary (in the code with poly_order = 3, diff_order = 3)` is changed this part of the code also has to be modified so you can see the timem evolution of the coefficients. `history` is a dictionary with associated `key` and `value`.
 
 
 
