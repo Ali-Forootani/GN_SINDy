@@ -33,7 +33,31 @@ plt.rcParams.update({
     "figure.subplot.hspace": 0.25,
     })
 
+## If you got bugs in plotting then apply the following, system to system may differ!
 
+plt.rcParams.update({
+    # Fonts
+    "font.family": "serif",
+    "font.serif": ["Times New Roman", "Times"],  # fallback if TNR missing
+    "font.size": 20,
+    "font.weight": "bold",
+
+    # TeX
+    "text.usetex": True,
+    "text.latex.preamble": r"""
+        \usepackage[T1]{fontenc}
+        \usepackage{amsmath}
+        \usepackage{amssymb}
+        \usepackage{bm}
+        \usepackage{physics}
+        \usepackage{lmodern}
+        \usepackage{nicefrac}
+    """,
+
+    # Layout
+    "legend.fancybox": True,
+    "figure.subplot.hspace": 0.25,
+})
 
 
 
