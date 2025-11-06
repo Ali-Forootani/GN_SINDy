@@ -199,7 +199,7 @@ for history_key in history.keys():
     history_key_parts = history_key.split("_")
       
     if history_key_parts[0] == "estimator":
-        if history_key_parts[3] == "0":
+        if history_key_parts[3] == "0" and len(history_key_parts)>4:
             
             if history_key_parts[5] != "2" and history_key_parts[5] != "4":
                 
