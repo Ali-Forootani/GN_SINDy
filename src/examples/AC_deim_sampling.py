@@ -238,8 +238,8 @@ print(model.constraint.coeff_vectors)
 #####################################################
 
 
-from deepymod.utils import plot_config_file
-from deepymod.analysis import load_tensorboard
+from GNSINDy.src.deepymod.utils import plot_config_file
+from GNSINDy.src.deepymod.analysis import load_tensorboard
 history = load_tensorboard(foldername)
 fig, axs = plt.subplots(1, 3, figsize=(15, 4))
 line_width=2
@@ -248,7 +248,7 @@ for history_key in history.keys():
     history_key_parts = history_key.split("_")
       
     if history_key_parts[0] == "estimator":
-        if history_key_parts[3] == "0":
+        if history_key_parts[3] == "0" and len(history_key_parts)>4 :
             
             if history_key_parts[5] != "4" and history_key_parts[5] != "12":
                 
