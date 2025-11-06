@@ -122,7 +122,7 @@ class Clustering(Estimator):
 
 ##########
 
-class STRidge(Estimator):
+class STRidgeD(Estimator):
     
     def __init__(self, lam = 0.0000, maxit = 100, tol = 0.1, normalize = 2, print_results = False):
         super().__init__()
