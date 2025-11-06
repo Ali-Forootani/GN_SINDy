@@ -203,7 +203,118 @@ class STRidge(Estimator):
                         
             return w.reshape(-1,1)
         
-        
+
+ 
+###################################################################
+ 
+    
+class STRidge(Estimator):
+    def __init__(self, lam=0.0, maxit=100, tol=0.1, normalize=2, print_results=False):
+        super().__init__()
+        self.lam = lam
+        self.tol = tol
+        self.normalize = normalize
+        self.print_results = print_results
+        self.maxit = maxit
+
+    def fit(self, X0: np.ndarray, y: np.ndarray):
+        """
+        Sequential Threshold Ridge Regression (single target y).
+        Returns weights as shape (d, 1).
+        """
+        X0 = np.asarray(X0)
+        y  = np.asarray(y).reshape(-1)  # ensure 1-D
+
+        if X0.ndim != 2:
+            X0 = np.atleast_2d(X0)
+
+        n, d = X0.shape
+        if y.shape[0] != n:
+            raise ValueError(f"X and y length mismatch: X has {n} rows but y has {y.shape[0]} elements.")
+
+        # work in a common dtype (keeps complex if present)
+        work_dtype = np.result_type(X0.dtype, y.dtype)
+        X = np.empty((n, d), dtype=work_dtype)
+
+        # normalization (column-wise)
+        if self.normalize != 0:
+            Mreg = np.zeros(d, dtype=work_dtype)
+            for i in range(d):
+                col = X0[:, i].astype(work_dtype, copy=False)
+                col_norm = np.linalg.norm(col, ord=self.normalize)
+                scale = 1.0 / (col_norm if col_norm != 0 else 1.0)
+                Mreg[i] = scale
+                X[:, i] = scale * col
+        else:
+            X = X0.astype(work_dtype, copy=False)
+            Mreg = np.ones(d, dtype=work_dtype)
+
+        # initial ridge/least-squares
+        if self.lam != 0:
+            A = X.T @ X + self.lam * np.eye(d, dtype=work_dtype)
+            b = X.T @ y
+            w = np.linalg.lstsq(A, b, rcond=None)[0]
+        else:
+            w = np.linalg.lstsq(X, y, rcond=None)[0]
+
+        w = w.reshape(-1)  # force 1-D
+        num_relevant = d
+        biginds = list(np.flatnonzero(np.abs(w) > self.tol))  # keep as Python list
+
+        # STRidge pruning loop
+        for j in range(self.maxit):
+            smallinds = np.flatnonzero(np.abs(w) < self.tol)
+            new_biginds = [i for i in range(d) if i not in set(smallinds.tolist())]
+
+            if num_relevant == len(new_biginds):
+                break
+            num_relevant = len(new_biginds)
+
+            # all coefficients dropped?
+            if len(new_biginds) == 0:
+                if j == 0:
+                    # tolerance too high; return current (possibly dense) solution
+                    out = (Mreg * w).reshape(-1, 1) if self.normalize != 0 else w.reshape(-1, 1)
+                    return out
+                else:
+                    break
+
+            biginds = new_biginds
+            w[smallinds] = 0
+
+            if len(biginds) > 0:
+                if self.lam != 0:
+                    A = X[:, biginds]
+                    w_sub = np.linalg.lstsq(A.T @ A + self.lam * np.eye(len(biginds), dtype=work_dtype),
+                                            A.T @ y, rcond=None)[0]
+                else:
+                    w_sub = np.linalg.lstsq(X[:, biginds], y, rcond=None)[0]
+                w[np.array(biginds, dtype=int)] = w_sub.reshape(-1)
+
+        # final refit on active set
+        if len(biginds) > 0:
+            if self.lam != 0:
+                A = X[:, biginds]
+                w_sub = np.linalg.lstsq(A.T @ A + self.lam * np.eye(len(biginds), dtype=work_dtype),
+                                        A.T @ y, rcond=None)[0]
+            else:
+                w_sub = np.linalg.lstsq(X[:, biginds], y, rcond=None)[0]
+            w[np.array(biginds, dtype=int)] = w_sub.reshape(-1)
+
+        # de-normalize and return as (d,1)
+        out = (Mreg * w).reshape(-1, 1) if self.normalize != 0 else w.reshape(-1, 1)
+        return out
+
+    
+ 
+    
+ 
+    
+##################################################################
+
+
+
+
     
 def STRidge_func(X0, y, lam, maxit, tol, normalize = 2, print_results = False):
     """
