@@ -105,7 +105,7 @@ class Ridge(Constraint):
 ###############################
 
 
-class STRidgeCons(Constraint):
+class STRidgeConsD(Constraint):
     
     def __init__(self, lam = 0.00000, maxit = 100, tol = 0.05, normalize = 2, print_results = False):
         super().__init__()
@@ -339,6 +339,100 @@ class STRidgeCon(Constraint):
         else: 
                         
             return [w.reshape(-1,1).to(X.device)]
+
+###############################
+###############################
+
+
+class STRidgeCons(Constraint):
+    def __init__(self, lam=0.0, maxit=100, tol=0.05, normalize=2, print_results=False):
+        super().__init__()
+        self.lam = lam
+        self.tol = tol
+        self.normalize = normalize
+        self.print_results = print_results
+        self.maxit = maxit
+
+    def fit(self, theta: TensorList, dt: TensorList):
+        """
+        Sequential Threshold Ridge Regression (single target y).
+        """
+        X0 = theta[0].detach().cpu().numpy()
+        y  = dt[0].detach().cpu().numpy()
+
+        # ensure 2D X and 1D y
+        if X0.ndim != 2:
+            X0 = np.atleast_2d(X0)
+        y = y.reshape(-1)  # (n,)
+
+        n, d = X0.shape
+        X = np.zeros((n, d))
+
+        # normalize columns if requested
+        if self.normalize != 0:
+            Mreg = np.zeros((d, 1))
+            for i in range(d):
+                col_norm = np.linalg.norm(X0[:, i], ord=self.normalize)
+                Mreg[i] = 1.0 / (col_norm if col_norm != 0 else 1.0)
+                X[:, i] = Mreg[i] * X0[:, i]
+        else:
+            X = X0
+
+        # initial ridge / least-squares
+        if self.lam != 0:
+            w = np.linalg.lstsq(X.T @ X + self.lam * np.eye(d), X.T @ y, rcond=None)[0]
+        else:
+            w = np.linalg.lstsq(X, y, rcond=None)[0]
+
+        w = w.reshape(-1)  # force 1D (d,)
+
+        num_relevant = d
+        biginds = list(np.where(np.abs(w) > self.tol)[0])  # keep as Python list
+
+        # main STRidge loop
+        for j in range(self.maxit):
+            smallinds = list(np.where(np.abs(w) < self.tol)[0])
+            new_biginds = [i for i in range(d) if i not in smallinds]
+
+            if num_relevant == len(new_biginds):
+                break
+            else:
+                num_relevant = len(new_biginds)
+
+            if len(new_biginds) == 0:
+                if j == 0:
+                    # return dense (no sparsity pattern found at this tol)
+                    return [torch.tensor(w.reshape(-1, 1), dtype=theta[0].dtype).to(theta[0].device)]
+                else:
+                    break
+
+            biginds = new_biginds
+            w[smallinds] = 0.0
+
+            if len(biginds) > 0:
+                if self.lam != 0:
+                    A = X[:, biginds]
+                    w_sub = np.linalg.lstsq(A.T @ A + self.lam * np.eye(len(biginds)), A.T @ y, rcond=None)[0]
+                else:
+                    w_sub = np.linalg.lstsq(X[:, biginds], y, rcond=None)[0]
+                w[np.array(biginds, dtype=int)] = w_sub.reshape(-1)
+
+        # final refit on active set (only if there is one)
+        if len(biginds) > 0:
+            if self.lam != 0:
+                A = X[:, biginds]
+                w_sub = np.linalg.lstsq(A.T @ A + self.lam * np.eye(len(biginds)), A.T @ y, rcond=None)[0]
+            else:
+                w_sub = np.linalg.lstsq(X[:, biginds], y, rcond=None)[0]
+            w[np.array(biginds, dtype=int)] = w_sub.reshape(-1)
+
+        # de-normalize if needed and return as Torch (column vector)
+        if self.normalize != 0:
+            out = (Mreg.reshape(-1) * w).reshape(-1, 1)
+        else:
+            out = w.reshape(-1, 1)
+
+        return [torch.tensor(out, dtype=theta[0].dtype).to(theta[0].device)]
 
 
 
