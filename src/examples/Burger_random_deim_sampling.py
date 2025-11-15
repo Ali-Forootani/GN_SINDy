@@ -1,0 +1,626 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Fri Nov  7 14:34:34 2025
+
+@author: forootan
+"""
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Nov  6 16:50:11 2025
+
+@author: forootan
+"""
+
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Mar 23 08:48:12 2023
+
+@author: forootani
+
+
+Discovering Burgers' equation with GNSINDy
+
+aliforootani@ieee.org
+forootani@mpi-magdeburg.mpg.de 
+
+"""
+
+
+import numpy as np
+import torch
+import sys
+import os
+import scipy.io as sio
+
+cwd = os.getcwd()
+#sys.path.append(cwd + '/my_directory')
+sys.path.append(cwd)
+
+
+def setting_directory(depth):
+    current_dir = os.path.abspath(os.getcwd())
+    root_dir = current_dir
+    for i in range(depth):
+        root_dir = os.path.abspath(os.path.join(root_dir, os.pardir))
+        sys.path.append(os.path.dirname(root_dir))
+    return root_dir
+root_dir = setting_directory(2)
+
+
+import matplotlib.pyplot as plt
+
+# General imports
+import numpy as np
+import torch
+
+# DeePyMoD imports
+from GNSINDy.src.deepymod import DeepMoD
+from GNSINDy.src.deepymod.data import Dataset, get_train_test_loader
+from GNSINDy.src.deepymod.data.samples import Subsample_random
+from GNSINDy.src.deepymod.data.burgers import burgers_delta, burgers_delta_org
+from GNSINDy.src.deepymod.data.burgers import burgers_delta
+from GNSINDy.src.deepymod.model.constraint import LeastSquares, Ridge, STRidgeCons
+from GNSINDy.src.deepymod.model.func_approx import NN
+from GNSINDy.src.deepymod.model.library import Library1D
+from GNSINDy.src.deepymod.model.sparse_estimators import Threshold, STRidge
+from GNSINDy.src.deepymod.training import train
+#from deepymod.training.training_2 import train
+from GNSINDy.src.deepymod.training.sparsity_scheduler import Periodic, TrainTest, TrainTestPeriodic
+#from deepymod.data.data_set_preparation import DatasetPDE, pde_data_loader
+import scipy.io
+from scipy.interpolate import griddata
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+from scipy.io import loadmat
+from GNSINDy.src.deepymod.data.DEIM_class import DEIM, RandDEIM, LDEIM, CURSelector
+import shutil
+
+from GNSINDy.src.deepymod.utils.utilities import create_or_reset_directory
+
+if torch.cuda.is_available():
+    device = "cuda"
+else:
+    device = "cpu"
+print(device)
+
+# Settings for reproducibility
+np.random.seed(42)
+torch.manual_seed(50)
+
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
+
+#########################
+#########################
+#########################
+
+# Making dataset
+
+
+
+###########################################
+
+
+
+# --- add at the top with the other imports ---
+from functools import partial
+from typing import Dict, Any
+
+# ------------------------------------------------------------------------------------
+# CONFIG: choose one sampler for training OR loop over all for visualization
+# ------------------------------------------------------------------------------------
+SAMPLER_NAME = "RANDDEIM"  # one of: "DEIM", "RandDEIM", "LDEIM", "CURSelector"
+SAMPLER_KWARGS: Dict[str, Any] = {
+    # Common knobs:
+    "n_d": 5,            # number of temporal chunks (as in your DEIM code)
+    "tolerance": 1e-3,   # energy tolerance -> basis size chooser
+    "num_basis": 5,      # target basis / samples per chunk (approx.)
+
+    # LDEIM-only extras:
+    "n_patches": 4,
+    "overlap": 2,
+    "k_per_patch": 3,
+
+    # RandDEIM-only extras:
+    "oversample": 10,
+    "n_power": 1,
+    "rng": None,
+
+    # CURSelector-only extras:
+    "c_cols": None,          # default -> num_basis
+    "r_rows": None,          # default -> num_basis
+    "deterministic": True,
+}
+# ------------------------------------------------------------------------------------
+
+
+def _build_sampler(
+    sampler_name: str,
+    X: np.ndarray,
+    n_d: int,
+    t_o_np: np.ndarray,
+    x_o_np: np.ndarray,
+    kwargs: Dict[str, Any],
+):
+    """Factory: return an initialized sampler with a unified interface."""
+    sampler_name = sampler_name.strip().upper()
+    if sampler_name == "DEIM":
+        return DEIM(X, n_d, t_o_np, x_o_np,
+                    tolerance=kwargs.get("tolerance", 1e-5),
+                    num_basis=kwargs.get("num_basis", 20))
+    elif sampler_name == "RANDDEIM":
+        return RandDEIM(X, n_d, t_o_np, x_o_np,
+                        tolerance=kwargs.get("tolerance", 1e-5),
+                        num_basis=kwargs.get("num_basis", 20),
+                        oversample=kwargs.get("oversample", 10),
+                        n_power=kwargs.get("n_power", 1),
+                        rng=kwargs.get("rng", None))
+    elif sampler_name == "LDEIM":
+        return LDEIM(X, n_d, t_o_np, x_o_np,
+                     tolerance=kwargs.get("tolerance", 1e-5),
+                     num_basis=kwargs.get("num_basis", 20),
+                     n_patches=kwargs.get("n_patches", 4),
+                     overlap=kwargs.get("overlap", 0),
+                     k_per_patch=kwargs.get("k_per_patch", None))
+    elif sampler_name == "CURSELECTOR" or sampler_name == "CUR":
+        return CURSelector(X, n_d, t_o_np, x_o_np,
+                           tolerance=kwargs.get("tolerance", 1e-5),
+                           num_basis=kwargs.get("num_basis", 20),
+                           c_cols=kwargs.get("c_cols", None),
+                           r_rows=kwargs.get("r_rows", None),
+                           deterministic=kwargs.get("deterministic", True),
+                           rng=kwargs.get("rng", None))
+    else:
+        raise ValueError(f"Unknown sampler '{sampler_name}'. Use DEIM | RandDEIM | LDEIM | CURSelector.")
+
+
+def create_data(
+    sampler: str = SAMPLER_NAME,
+    sampler_kwargs: Dict[str, Any] = SAMPLER_KWARGS
+):
+    """
+    Create (coords, data) using a chosen greedy sampler.
+
+    Returns:
+        coords: torch.FloatTensor of shape (N, 2) with columns [t, x]
+        data:   torch.FloatTensor of shape (N, 1) with sampled field values
+    """
+
+    # --- grid & field ---
+    x_o = torch.linspace(-8, 8, 100)
+    t_o = torch.linspace(0.5, 10.0, 100)
+    v = 0.1
+    A = 1.0
+
+    # burgers_delta_org returns (coords, Exact) in your code base
+    _, Exact_torch = burgers_delta_org(x_o, t_o, v, A)  # field (likely torch/tensor)
+    # Ensure numpy arrays for the sampler classes (they use NumPy ops)
+    X = Exact_torch.detach().cpu().numpy() if torch.is_tensor(Exact_torch) else np.asarray(Exact_torch)
+    # X must be [space, time]; your previous usage implies that shape already
+
+    t_o_np = t_o.detach().cpu().numpy() if torch.is_tensor(t_o) else np.asarray(t_o)
+    x_o_np = x_o.detach().cpu().numpy() if torch.is_tensor(x_o) else np.asarray(x_o)
+
+    # --- build and run sampler ---
+    n_d = int(sampler_kwargs.get("n_d", 5))
+    sampler_obj = _build_sampler(sampler, X, n_d, t_o_np, x_o_np, sampler_kwargs)
+    S_s, T_s, U_s = sampler_obj.execute()  # all numpy arrays, column vectors
+
+    # coords need to be [t, x] to match your plotting elsewhere
+    coords = torch.from_numpy(np.stack((T_s.squeeze(), S_s.squeeze()), axis=-1)).float()
+    data = torch.from_numpy(U_s.reshape(-1, 1)).float()
+
+    return coords, data
+
+
+# -----------------------------------------------------------------------------
+# QUICK VISUAL CHECK: compare samplers' greedy samples (no training needed)
+# -----------------------------------------------------------------------------
+def plot_greedy_samples_comparison():
+    methods = ["DEIM", "RandDEIM", "LDEIM", "CURSelector"]
+    ncols = 2
+    nrows = int(np.ceil(len(methods) / ncols))
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=(10, 8), squeeze=False)
+    axes = axes.ravel()
+
+    # true field (for coloring reference panel)
+    x_o = torch.linspace(-8, 8, 100)
+    t_o = torch.linspace(0.5, 10.0, 100)
+    v, A = 0.1, 1.0
+    coords_org, Exact_torch = burgers_delta_org(x_o, t_o, v, A)
+    coords_org = coords_org.cpu()
+    Exact_np = Exact_torch.detach().cpu().numpy()
+    im0 = axes[0].scatter(coords_org[:, 0], coords_org[:, 1], c=Exact_np[:,:], s=8)
+    axes[0].set_title("Full field (reference)")
+    axes[0].set_xlabel(r"$t$")
+    axes[0].set_ylabel(r"$x$")
+    axes[0].set_ylim([-8, 8])
+    fig.colorbar(im0, ax=axes[0])
+
+    for k, name in enumerate(methods, start=1):
+        try:
+            coords_k, data_k = create_data(sampler=name)
+            ax = axes[k]
+            im = ax.scatter(coords_k[:, 0], coords_k[:, 1], c=data_k[:, 0], s=10, marker="o")
+            ax.set_title(f"Greedy samples: {name}")
+            ax.set_xlabel(r"$t$")
+            ax.set_ylabel(r"$x$")
+            ax.set_ylim([-8, 8])
+            fig.colorbar(im, ax=ax)
+        except Exception as e:
+            ax = axes[k]
+            ax.set_title(f"{name} failed")
+            ax.text(0.5, 0.5, str(e), ha="center", va="center")
+            ax.axis("off")
+
+    # hide unused axes if any
+    for j in range(k + 1, len(axes)):
+        axes[j].axis("off")
+
+    fig.tight_layout()
+    plt.show()
+
+
+# -----------------------------------------------------------------------------
+# HOW TO USE WITH YOUR EXISTING Dataset / training:
+# -----------------------------------------------------------------------------
+# 1) Visualize all samplers quickly (optional):
+# plot_greedy_samples_comparison()
+
+# 2) Train with ONE chosen sampler (uses SAMPLER_NAME/SAMPLER_KWARGS above):
+num_of_samples = 1000
+dataset = Dataset(
+    partial(create_data, sampler=SAMPLER_NAME, sampler_kwargs=SAMPLER_KWARGS),
+    preprocess_kwargs={
+        "noise_level": 0.00,
+        "normalize_coords": False,
+        "normalize_data": False,
+    },
+    subsampler=Subsample_random,
+    subsampler_kwargs={"number_of_samples": num_of_samples},
+    device=device,
+)
+
+# (the rest of your training code remains unchanged)
+
+
+
+
+
+##########################
+##########################
+
+train_dataloader, test_dataloader = get_train_test_loader(
+    dataset, train_test_split = 1.00)
+
+##########################
+##########################
+
+poly_order = 2
+diff_order = 2
+
+n_combinations = (poly_order+1)*(diff_order+1) 
+n_features = 1
+
+
+network = NN(2, [64, 64, 64, 64], 1)
+library = Library1D(poly_order, diff_order)
+sparsity_scheduler = TrainTestPeriodic(periodicity=100, patience=500, delta=1e-5)
+constraint = STRidgeCons()
+estimator = STRidge()
+
+
+#constraint = Ridge()
+# Configuration of the sparsity scheduler
+model = DeepMoD(network, library, estimator, constraint).to(device)
+
+# Defining optimizer
+optimizer = torch.optim.Adam(model.parameters(), betas=(0.99, 0.99), amsgrad=True, lr=1e-3) 
+
+foldername = f"./data/deepymod/burgers_{SAMPLER_NAME}/"
+
+
+
+# Example usage:
+#directory_path = "/path/to/your/directory"
+create_or_reset_directory(foldername)
+
+
+
+######################################
+######################################
+######################################
+
+
+train(
+    model,
+    train_dataloader,
+    test_dataloader,
+    optimizer,
+    sparsity_scheduler,
+    log_dir= foldername,
+    exp_ID="Test",
+    write_iterations=25,
+    max_iterations=25000,
+    delta=1e-4,
+    patience=200,
+)
+
+model.sparsity_masks
+
+print(model.estimator_coeffs())
+print(model.constraint.coeff_vectors[0].detach().cpu())
+
+
+###########################################################
+###########################################################
+###########################################################
+
+
+from GNSINDy.src.deepymod.utils import plot_config_file
+from GNSINDy.src.deepymod.analysis import load_tensorboard
+history = load_tensorboard(foldername)
+fig, axs = plt.subplots(1, 3, figsize=(15, 4))
+line_width=2
+
+for history_key in history.keys():
+    history_key_parts = history_key.split("_")
+      
+    if history_key_parts[0] == "estimator":
+        if history_key_parts[3] == "0" and len(history_key_parts)>4:
+            
+            if history_key_parts[5] != "2" and history_key_parts[5] != "4":
+                
+                axs[0].semilogx(
+                history[history_key].loc[100:],
+                
+                linestyle="--",
+                linewidth= line_width
+                )
+        
+            elif history_key_parts[5] == "2":
+                    
+                axs[0].semilogx(
+                    history[history_key].loc[100:],
+                    label= "\r $u_{xx}$",
+                    
+                    linewidth= line_width + 1
+                    )
+            elif history_key_parts[5] == "4":
+            
+                axs[0].semilogx(
+                    history[history_key].loc[100:],
+                    label= "\r $uu_x$",
+                    
+                    linewidth= line_width + 1
+                    ) 
+            
+            
+    
+axs[0].set_ylim([-2.5, 2.5])
+axs[0].set_xlabel("Iterations")
+axs[0].set_ylabel("Coefficients")
+
+
+# Add legends to the right of the subplots
+#axs[0].legend(loc='center left', bbox_to_anchor=(0.45, 0.9), ncol=2)
+#axs[0].legend(loc='center left', bbox_to_anchor=(0.0, 1.05), ncol=2)
+#axs[0].grid(True)
+axs[0].grid(True)
+
+
+coords = dataset.get_coords().cpu()
+data = dataset.get_data().cpu()
+
+im = axs[1].scatter(coords[:,0], coords[:,1], c=data[:,0], marker="o", 
+                    label=r"Greedy samples: \texttt{L-DEIM}",
+                    s=20)
+axs[1].set_xlabel(r'$t$')
+axs[1].set_ylabel(r'$x$',labelpad=0)
+axs[1].set_ylim([-8,8])
+#axs[1].legend(loc='center left', bbox_to_anchor=(0.0, 1.05), ncol=1)
+#fig.colorbar(mappable=im)
+
+
+##################################
+##################################
+##################################
+
+x_o = torch.linspace(-8, 8, 100)
+t_o = torch.linspace(0.5, 10.0, 100)
+v = 0.1
+A = 1.0
+coords_org , Exact = burgers_delta_org( x_o, t_o, v, A)
+im = axs[2].scatter(coords_org[:,0], coords_org[:,1], c=Exact[:,:], marker="x", s=10)
+axs[2].set_xlabel(r'$t$')
+axs[2].set_ylabel(r'$x$', labelpad=0)
+axs[2].set_ylim([-8,8])
+fig.colorbar(mappable=im)
+
+#################################
+#################################
+#################################
+
+fig.legend(
+    
+    loc="center",  # Change the location to upper center
+    ncol=4,
+    bbox_to_anchor=(0.51, 1),  # Adjust the coordinates
+    bbox_transform=fig.transFigure,
+    fontsize=20,
+    frameon=True,
+)
+
+
+plt.savefig(foldername +
+     "Burgers" + "coefficients" + "RandDEIM_sampling" + f'{num_of_samples}'  
+     +"_poly_order_ " + f'{poly_order}'
+     +"_diff_order_ " + f'{diff_order}'
+     +
+     ".png", bbox_inches='tight',
+    dpi=600,
+)
+plt.savefig(foldername +
+     "Burgers" + "coefficients" + "RandDEIM_sampling" + f'{num_of_samples}' 
+     +"_poly_order_ " + f'{poly_order}'
+     +"_diff_order_ " + f'{diff_order}' 
+     +".pdf", bbox_inches='tight',
+    dpi=600,
+)
+
+plt.show()
+
+
+###############################################################################
+###############################################################################
+###############################################################################
+###############################################################################
+
+num_of_samples_2 = 500
+
+dataset = Dataset(
+    create_data,
+    #load_kwargs=load_kwargs,
+    preprocess_kwargs={
+        "noise_level": 0.00,
+        "normalize_coords": False,
+        "normalize_data": False,
+    },
+    subsampler=Subsample_random,
+    subsampler_kwargs={"number_of_samples": num_of_samples_2},
+    device=device,)
+
+fig, axs = plt.subplots(1, 2, figsize=(7, 3), sharey=False)
+
+
+coords = dataset.get_coords().cpu()
+data = dataset.get_data().cpu()
+
+im = axs[1].scatter(coords[:,0], coords[:,1], c=data[:,0], marker="o", 
+                    label=r"Greedy samples: \texttt{L-DEIM}",
+                    s=5)
+axs[1].set_xlabel(r'$t$')
+#axs[1].set_ylabel(r'$x$',labelpad=0)
+axs[1].set_ylim([-8,8])
+#axs[1].legend(loc='center left', bbox_to_anchor=(0.0, 1.05), ncol=1)
+#fig.colorbar(mappable=im)
+
+
+##################################
+##################################
+##################################
+
+x_o = torch.linspace(-8, 8, 100)
+t_o = torch.linspace(0.5, 10.0, 100)
+v = 0.1
+A = 1.0
+coords_org , Exact = burgers_delta_org( x_o, t_o, v, A)
+im = axs[0].scatter(coords_org[:,0], coords_org[:,1], c=Exact[:,:], marker="o", s=10)
+axs[0].set_xlabel(r'$t$')
+axs[0].set_ylabel(r'$x$', labelpad=0)
+axs[0].set_ylim([-8,8])
+fig.colorbar(mappable=im)
+
+
+fig.legend(
+    
+    loc="center",  # Change the location to upper center
+    ncol=4,
+    bbox_to_anchor=(0.69, 0.95),  # Adjust the coordinates
+    bbox_transform=fig.transFigure,
+    fontsize=10,
+    frameon=True,)
+
+
+plt.savefig(foldername +
+     "Burgers" + "_RandDEIM_schematic_" + f'{num_of_samples_2}'  
+     +"_poly_order_ " + f'{poly_order}'
+     +"_diff_order_ " + f'{diff_order}'
+     +
+     ".png", bbox_inches='tight',
+    dpi=600,)
+
+
+###############################################################################
+###############################################################################
+###############################################################################
+###############################################################################
+
+
+fig, ax = plt.subplots(1, 1, figsize=(4, 3))
+line_width=1
+
+for history_key in history.keys():
+    history_key_parts = history_key.split("_")
+      
+    if history_key_parts[0] == "estimator":
+        if history_key_parts[3] == "0" and len(history_key_parts)>4 :
+            
+            if history_key_parts[5] != "2" and history_key_parts[5] != "4":
+                
+                ax.semilogx(
+                history[history_key].loc[100:],
+                
+                linestyle="--",
+                linewidth= line_width
+                )
+        
+            elif history_key_parts[5] == "2":
+                    
+                ax.semilogx(
+                    history[history_key].loc[100:],
+                    label= "\r $u_{xx}$",
+                    
+                    linewidth= line_width + 1
+                    )
+            elif history_key_parts[5] == "4":
+            
+                ax.semilogx(
+                    history[history_key].loc[100:],
+                    label= "\r $uu_x$",
+                    
+                    linewidth= line_width + 1
+                    ) 
+            
+ax.set_ylim([-2.5, 2.5])
+ax.set_xlabel("Iterations")
+ax.set_ylabel("Coefficients")
+ax.grid(True)
+
+
+fig.legend(
+    
+    loc="center",  # Change the location to upper center
+    ncol=4,
+    bbox_to_anchor=(0.51, 1),  # Adjust the coordinates
+    bbox_transform=fig.transFigure,
+    fontsize=10,
+    frameon=True,
+)
+
+
+plt.savefig(foldername +
+     "Burgers" + "_coeff_iterations_RandDEIM_" + f'{num_of_samples}'  
+     +"_poly_order_ " + f'{poly_order}'
+     +"_diff_order_ " + f'{diff_order}'
+     +
+     ".png", bbox_inches='tight',
+    dpi=600,
+)
+
+
+
+
+
+
+
+
+
+
+
